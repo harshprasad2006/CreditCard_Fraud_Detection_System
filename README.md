@@ -110,6 +110,12 @@ streamlit run 04_dashboard.py
 
 ---
 
+## 🎥 Demo
+
+Live deployment not hosted due to dataset size (147MB, exceeds GitHub/Streamlit Cloud limits for direct hosting).
+
+Run locally to try it yourself — see instructions below.
+
 ## 🚀 Future Improvements
 
 - Deploy with the dataset hosted externally (e.g. cloud storage) for a live public demo
