@@ -99,27 +99,44 @@ page = st.sidebar.radio(
 # -------------------------------------------------------------
 # Helper: Live Feature Scaler & Predictor
 # -------------------------------------------------------------
+# Exact statistical constants from the training pipeline
+TRAIN_AMOUNT_MEAN = 88.3496
+TRAIN_AMOUNT_STD = 250.1201
+TRAIN_TIME_MEAN = 94813.86
+TRAIN_TIME_STD = 47488.15
+
+# Real mathematical PCA centers for fraud vs legitimate transactions
+FRAUD_PCA_PROFILE = {
+    'V1': -4.7719, 'V2': 3.6238, 'V3': -7.0333, 'V4': 4.5420, 'V5': -3.1512,
+    'V6': -1.3977, 'V7': -5.5687, 'V8': 0.5706, 'V9': -2.5811, 'V10': -5.6769,
+    'V11': 3.8002, 'V12': -6.2594, 'V13': -0.1093, 'V14': -6.9717, 'V15': -0.0929,
+    'V16': -4.1399, 'V17': -6.6658, 'V18': -2.2463, 'V19': 0.6807, 'V20': 0.3723,
+    'V21': 0.7136, 'V22': 0.0140, 'V23': -0.0403, 'V24': -0.1051, 'V25': 0.0414,
+    'V26': 0.0516, 'V27': 0.1706, 'V28': 0.0757
+}
+
+NORMAL_PCA_PROFILE = {
+    'V1': 0.0083, 'V2': -0.0063, 'V3': 0.0122, 'V4': -0.0079, 'V5': 0.0055,
+    'V6': 0.0024, 'V7': 0.0096, 'V8': -0.0010, 'V9': 0.0045, 'V10': 0.0098,
+    'V11': -0.0066, 'V12': 0.0108, 'V13': 0.0002, 'V14': 0.0121, 'V15': 0.0002,
+    'V16': 0.0072, 'V17': 0.0115, 'V18': 0.0039, 'V19': -0.0012, 'V20': -0.0006,
+    'V21': -0.0012, 'V22': -0.0000, 'V23': 0.0001, 'V24': 0.0002, 'V25': -0.0001,
+    'V26': -0.0001, 'V27': -0.0003, 'V28': -0.0001
+}
+
 def run_live_predictions(input_df, model_obj, model_type="rf"):
     proc_df = input_df.copy()
     
-    # Scale Amount and Time dynamically
-    cur_scaler = StandardScaler()
+    # Scale Amount using exact benchmark training parameters
     if "Amount" in proc_df.columns:
-        if len(proc_df) > 1 and proc_df["Amount"].nunique() > 1:
-            proc_df["Amount_scaled"] = cur_scaler.fit_transform(proc_df[["Amount"]])
-        elif default_scaler is not None and hasattr(default_scaler, "mean_"):
-            proc_df["Amount_scaled"] = (proc_df["Amount"] - default_scaler.mean_[0]) / default_scaler.scale_[0]
-        else:
-            proc_df["Amount_scaled"] = proc_df["Amount"] / 100.0
-    else:
+        proc_df["Amount_scaled"] = (proc_df["Amount"].astype(float) - TRAIN_AMOUNT_MEAN) / TRAIN_AMOUNT_STD
+    elif "Amount_scaled" not in proc_df.columns:
         proc_df["Amount_scaled"] = 0.0
 
+    # Scale Time using exact benchmark training parameters
     if "Time" in proc_df.columns:
-        if len(proc_df) > 1 and proc_df["Time"].nunique() > 1:
-            proc_df["Time_scaled"] = cur_scaler.fit_transform(proc_df[["Time"]])
-        else:
-            proc_df["Time_scaled"] = proc_df["Time"] / 100000.0
-    else:
+        proc_df["Time_scaled"] = (proc_df["Time"].astype(float) - TRAIN_TIME_MEAN) / TRAIN_TIME_STD
+    elif "Time_scaled" not in proc_df.columns:
         proc_df["Time_scaled"] = 0.0
 
     # Ensure required V1-V28 features exist
@@ -480,48 +497,46 @@ elif page == "5. 🧪 Single Transaction Inspector":
         severity = st.slider("Anomaly Severity Level (%)", min_value=0, max_value=100, value=20, step=5)
         factor = severity / 100.0
 
-        # Mathematically interpolate key features across the decision boundary
-        v14 = 0.05 + factor * (-6.75 - 0.05)
-        v10 = -0.09 + factor * (-4.60 - (-0.09))
-        v12 = 0.14 + factor * (-5.50 - 0.14)
-        v4 = -0.02 + factor * (4.20 - (-0.02))
-        v17 = -0.06 + factor * (-5.30 - (-0.06))
-        v11 = -0.03 + factor * (3.60 - (-0.03))
-        v3 = 0.18 + factor * (-5.10 - 0.18)
-        v16 = 0.07 + factor * (-3.55 - 0.07)
+        # Mathematically interpolate all 28 PCA latent dimensions along the real fraud gradient
+        test_row = {}
+        for feat in [f"V{i}" for i in range(1, 29)]:
+            norm_val = NORMAL_PCA_PROFILE[feat]
+            fraud_val = FRAUD_PCA_PROFILE[feat]
+            test_row[feat] = norm_val + factor * (fraud_val - norm_val)
 
         col_met1, col_met2, col_met3, col_met4 = st.columns(4)
-        col_met1.metric("Calculated V14", f"{v14:.2f}")
-        col_met2.metric("Calculated V10", f"{v10:.2f}")
-        col_met3.metric("Calculated V4", f"{v4:.2f}")
-        col_met4.metric("Calculated V12", f"{v12:.2f}")
+        col_met1.metric("V14 (Primary Indicator)", f"{test_row['V14']:.2f}", delta="- Negative Anomaly" if factor > 0.3 else "Normal")
+        col_met2.metric("V10 (Latent Correlation)", f"{test_row['V10']:.2f}", delta="- Negative Anomaly" if factor > 0.3 else "Normal")
+        col_met3.metric("V4 (Positive Spike)", f"{test_row['V4']:.2f}", delta="+ Positive Anomaly" if factor > 0.3 else "Normal")
+        col_met4.metric("V12 (Latent Indicator)", f"{test_row['V12']:.2f}", delta="- Negative Anomaly" if factor > 0.3 else "Normal")
 
     else:
-        st.subheader("Manual Latent PCA Sliders")
-        st.caption("Adjust individual features directly.")
+        st.subheader("Manual Latent PCA Sliders (Labeled with Anomaly Directions)")
+        st.caption("Adjust individual features directly. Real financial PCA indicators are labeled below:")
+        
         col_v1, col_v2, col_v3, col_v4 = st.columns(4)
         with col_v1:
-            v14 = st.slider("V14 (Primary Fraud Indicator)", -20.0, 10.0, 0.0)
+            v14 = st.slider("V14 (Strong Negative Anomaly)", -20.0, 10.0, 0.0, help="Normal is ~0. Fraud is typically -4 to -19.")
         with col_v2:
-            v10 = st.slider("V10 (Negative Anomaly)", -15.0, 10.0, 0.0)
+            v10 = st.slider("V10 (Negative Anomaly)", -15.0, 10.0, 0.0, help="Normal is ~0. Fraud is typically -3 to -12.")
         with col_v3:
-            v12 = st.slider("V12 (Negative Anomaly)", -15.0, 10.0, 0.0)
+            v12 = st.slider("V12 (Negative Anomaly)", -15.0, 10.0, 0.0, help="Normal is ~0. Fraud is typically -3 to -10.")
         with col_v4:
-            v4 = st.slider("V4 (Positive Spike Indicator)", -5.0, 15.0, 0.0)
+            v4 = st.slider("V4 (Strong Positive Spike)", -5.0, 15.0, 0.0, help="Normal is ~0. Fraud spikes to +3 to +10.")
 
-        with st.expander("Secondary Latent Features (V17, V11, V3, V16)"):
+        with st.expander("Secondary Critical Latent Features (V17, V11, V3, V16)"):
             col_s1, col_s2, col_s3, col_s4 = st.columns(4)
             with col_s1:
-                v17 = st.slider("V17 (High Impact)", -15.0, 10.0, 0.0)
+                v17 = st.slider("V17 (Negative Anomaly)", -15.0, 10.0, 0.0)
             with col_s2:
-                v11 = st.slider("V11 (High Impact)", -5.0, 15.0, 0.0)
+                v11 = st.slider("V11 (Positive Anomaly)", -5.0, 15.0, 0.0)
             with col_s3:
-                v3 = st.slider("V3 (Feature Spread)", -15.0, 10.0, 0.0)
+                v3 = st.slider("V3 (Negative Anomaly)", -15.0, 10.0, 0.0)
             with col_s4:
-                v16 = st.slider("V16 (Feature Spread)", -10.0, 10.0, 0.0)
+                v16 = st.slider("V16 (Negative Anomaly)", -10.0, 10.0, 0.0)
 
-    if st.button("🔍 Run Live Fraud Assessment", type="primary", use_container_width=True):
-        test_row = {f"V{i}": 0.0 for i in range(1, 29)}
+        # Baseline is normal profile
+        test_row = dict(NORMAL_PCA_PROFILE)
         test_row["V14"] = v14
         test_row["V10"] = v10
         test_row["V12"] = v12
@@ -530,6 +545,8 @@ elif page == "5. 🧪 Single Transaction Inspector":
         test_row["V11"] = v11
         test_row["V3"] = v3
         test_row["V16"] = v16
+
+    if st.button("🔍 Run Live Fraud Assessment", type="primary", use_container_width=True):
         test_row["Amount"] = test_amount
         test_row["Time"] = test_time
 
