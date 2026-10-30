@@ -68,6 +68,8 @@ def get_dataset(file_upload):
         return uploaded_df, f"Uploaded CSV ({file_upload.name})"
     elif os.path.exists("creditcard.csv"):
         return pd.read_csv("creditcard.csv"), "Default Dataset (creditcard.csv)"
+    elif os.path.exists("creditcard_sample.csv"):
+        return pd.read_csv("creditcard_sample.csv"), "Default Dataset (creditcard_sample.csv)"
     elif os.path.exists("model_results.csv"):
         return None, "No Raw CSV (Pre-calculated fallback only)"
     return None, "No Data Found"
