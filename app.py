@@ -375,23 +375,22 @@ elif page == "4. 🔴 Real-Time Simulation Engine":
             "Detection Model Engine",
             ["Random Forest (SMOTE)", "Logistic Regression", "Isolation Forest"]
         )
-        max_streamable = len(df)
+        total_rows = len(df)
         sim_count = st.slider(
-            "Stream Batch Size",
+            "Number of Rows to Stream",
             min_value=1,
-            max_value=min(100, max_streamable),
-            value=min(20, max_streamable),
-            step=1
+            max_value=total_rows,
+            value=total_rows if total_rows <= 50 else 30,
+            step=1,
+            help=f"Dataset has {total_rows} rows. Select exactly how many you want to stream."
         )
-        sim_speed = st.slider("Latency (seconds per transaction)", 0.05, 0.8, 0.15)
+        sim_speed = st.slider("Latency (seconds per transaction)", 0.02, 0.5, 0.1)
         
-        has_fraud_label = ("Class" in df.columns and 1 in df["Class"].values)
-        if has_fraud_label:
-            boost_frauds = st.checkbox("Inject Frauds in Stream (Recommended for Live Demo)", value=True)
-        else:
-            boost_frauds = False
-            st.caption("ℹ️ 'Class' label not present or only 1 class in uploaded data: streaming directly row-by-row.")
-            
+        stream_mode = st.radio(
+            "Streaming Order:",
+            ["Direct Sequential (Row 1 to N)", "Random Sample from Dataset"],
+            horizontal=True
+        )
         start_stream_btn = st.button("▶ Start Real-Time Stream", type="primary")
 
     with col_display:
@@ -404,18 +403,11 @@ elif page == "4. 🔴 Real-Time Simulation Engine":
         log_box = st.empty()
 
     if start_stream_btn:
-        # STRICT SAMPLING: ONLY FROM THE UPLOADED/ACTIVE DATASET!
-        if has_fraud_label and boost_frauds:
-            frauds_subset = df[df["Class"] == 1]
-            normal_subset = df[df["Class"] == 0]
-            n_f = max(1, int(sim_count * 0.3)) if len(frauds_subset) > 0 else 0
-            n_n = sim_count - n_f
-            
-            f_sample = frauds_subset.sample(n_f, replace=(len(frauds_subset) < n_f))
-            n_sample = normal_subset.sample(n_n, replace=(len(normal_subset) < n_n)) if len(normal_subset) > 0 else pd.DataFrame()
-            sample_stream = pd.concat([f_sample, n_sample]).sample(frac=1).reset_index(drop=True)
+        # STRICT STREAMING: ONLY AND EXACTLY FROM THE ACTIVE/UPLOADED DATASET
+        if stream_mode == "Direct Sequential (Row 1 to N)":
+            sample_stream = df.iloc[:sim_count].copy().reset_index(drop=True)
         else:
-            sample_stream = df.sample(sim_count, replace=(len(df) < sim_count)).reset_index(drop=True)
+            sample_stream = df.sample(sim_count, random_state=42).copy().reset_index(drop=True)
 
         selected_model = (
             rf_model if chosen_model_name == "Random Forest (SMOTE)"
@@ -428,7 +420,7 @@ elif page == "4. 🔴 Real-Time Simulation Engine":
         total_intercepted = 0.0
         stream_records = []
 
-        status_box.info(f"⚡ Streaming {len(sample_stream)} transactions live from: {dataset_source}...")
+        status_box.info(f"⚡ Streaming exactly {len(sample_stream)} rows directly from: {dataset_source}...")
 
         for idx, row in sample_stream.iterrows():
             time.sleep(sim_speed)
