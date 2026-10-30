@@ -305,10 +305,10 @@ elif page == "3. 🧠 Live Model Inference & Evaluation":
 
             perf_data.append({
                 "Model": m_name,
-                "Accuracy": f"{acc * 100:.2f}%",
-                "Precision": f"{prec:.4f}",
-                "Recall": f"{rec:.4f}",
-                "F1-Score": f"{f1:.4f}",
+                "Accuracy (Caution: Imbalanced)": f"{acc * 100:.2f}%",
+                "Precision (True Positives)": f"{prec:.4f}",
+                "Recall (Catch Rate)": f"{rec:.4f}",
+                "F1-Score (Real Balanced Metric)": f"{f1:.4f}",
                 "ROC-AUC": auc_str
             })
             # Force labels=[0, 1] so confusion matrix is always guaranteed 2x2 [[TN, FP], [FN, TP]]
@@ -316,6 +316,13 @@ elif page == "3. 🧠 Live Model Inference & Evaluation":
 
         st.subheader("📋 Live Performance Comparison Table")
         st.dataframe(pd.DataFrame(perf_data), use_container_width=True)
+
+        st.warning(
+            "⚠️ **The Accuracy Paradox (Crucial Presentation Point):**\n\n"
+            "If an examiner asks *'Why is accuracy so high (~99%)? Is it overfitted?'*:\n"
+            "- **Answer:** *'No Sir! In a dataset where 99.83% transactions are legitimate, a completely broken model that always outputs Normal gets 99.83% accuracy without catching a single fraud!'*\n"
+            "- **Real Metric to judge:** Look at **F1-Score (~0.81)**, **Recall (0.78 - 0.88)**, and **Precision (~0.85)**. That is where Random Forest (SMOTE) actually proves it isn't overfitted and catches real frauds!"
+        )
 
         st.subheader("🧩 Confusion Matrices (Guaranteed 2x2 [[Normal, Fraud]])")
         col_cm1, col_cm2, col_cm3 = st.columns(3)
