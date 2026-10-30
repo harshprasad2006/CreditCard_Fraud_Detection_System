@@ -452,79 +452,74 @@ elif page == "4. 🔴 Real-Time Simulation Engine":
 # -------------------------------------------------------------
 elif page == "5. 🧪 Single Transaction Inspector":
     st.title("🧪 Single Transaction Inspector")
-    st.markdown("Test single transaction inputs live with customizable feature sliders or instant 1-click presets.")
+    st.markdown("Test single transaction inputs live with real-time risk calculation and instant feedback.")
     st.markdown("---")
 
-    st.subheader("⚡ Quick Test Presets (1-Click)")
-    col_p1, col_p2, col_p3 = st.columns([1, 1, 2])
-    
-    preset_choice = "Custom"
-    with col_p1:
-        if st.button("🚨 Load Suspicious Fraud Preset", use_container_width=True):
-            st.session_state["preset"] = "fraud"
-    with col_p2:
-        if st.button("✅ Load Normal Transaction Preset", use_container_width=True):
-            st.session_state["preset"] = "normal"
-
-    active_preset = st.session_state.get("preset", "custom")
-
-    # Set initial values based on preset
-    if active_preset == "fraud":
-        init_amount = 540.0
-        init_time = 406
-        init_v14, init_v10, init_v12, init_v4 = -6.75, -4.60, -5.50, 4.20
-        init_v17, init_v11, init_v3, init_v16 = -5.30, 3.60, -5.10, -3.55
-        st.info("Loaded real fraudulent transaction profile parameters.")
-    elif active_preset == "normal":
-        init_amount = 75.0
-        init_time = 3600
-        init_v14, init_v10, init_v12, init_v4 = 0.05, -0.09, 0.14, -0.02
-        init_v17, init_v11, init_v3, init_v16 = -0.06, -0.03, 0.18, 0.07
-        st.success("Loaded legitimate transaction profile parameters.")
-    else:
-        init_amount = 250.0
-        init_time = 3600
-        init_v14, init_v10, init_v12, init_v4 = 0.0, 0.0, 0.0, 0.0
-        init_v17, init_v11, init_v3, init_v16 = 0.0, 0.0, 0.0, 0.0
+    # Mode Selector
+    inspector_mode = st.radio(
+        "Testing Mode:",
+        ["🎯 Smart Anomaly Severity Controller (Recommended for Live Demo)", "🎛️ Individual PCA Feature Sliders"],
+        horizontal=True
+    )
 
     st.markdown("---")
     c1, c2, c3 = st.columns(3)
     with c1:
-        test_amount = st.number_input("Transaction Amount ($)", min_value=0.5, max_value=25000.0, value=float(init_amount), step=10.0)
+        test_amount = st.number_input("Transaction Amount ($)", min_value=0.5, max_value=25000.0, value=250.0, step=10.0)
     with c2:
-        test_time = st.number_input("Time Elapsed (seconds)", min_value=0, max_value=172800, value=int(init_time))
+        test_time = st.number_input("Time Elapsed (seconds)", min_value=0, max_value=172800, value=3600)
     with c3:
         test_model_choice = st.selectbox("Inference Model", ["Random Forest (SMOTE)", "Logistic Regression", "Isolation Forest"])
 
-    st.subheader("Key Anomaly Indicators (Top Features impacting ML decision)")
-    col_v1, col_v2, col_v3, col_v4 = st.columns(4)
-    with col_v1:
-        v14 = st.slider("V14 (Primary Fraud Indicator)", -20.0, 10.0, float(init_v14))
-    with col_v2:
-        v10 = st.slider("V10 (Negative Anomaly)", -15.0, 10.0, float(init_v10))
-    with col_v3:
-        v12 = st.slider("V12 (Negative Anomaly)", -15.0, 10.0, float(init_v12))
-    with col_v4:
-        v4 = st.slider("V4 (Positive Spike Indicator)", -5.0, 15.0, float(init_v4))
+    if inspector_mode == "🎯 Smart Anomaly Severity Controller (Recommended for Live Demo)":
+        st.subheader("Transaction Behavior & Anomaly Severity")
+        st.caption("Drag the slider from 0% (Legitimate) to 100% (High Anomaly/Fraud) to watch the model cross its decision boundary in real time.")
+        
+        severity = st.slider("Anomaly Severity Level (%)", min_value=0, max_value=100, value=20, step=5)
+        factor = severity / 100.0
 
-    with st.expander("Secondary Critical Latent Features (V17, V11, V3, V16)"):
-        col_s1, col_s2, col_s3, col_s4 = st.columns(4)
-        with col_s1:
-            v17 = st.slider("V17 (High Impact)", -15.0, 10.0, float(init_v17))
-        with col_s2:
-            v11 = st.slider("V11 (High Impact)", -5.0, 15.0, float(init_v11))
-        with col_s3:
-            v3 = st.slider("V3 (Feature Spread)", -15.0, 10.0, float(init_v3))
-        with col_s4:
-            v16 = st.slider("V16 (Feature Spread)", -10.0, 10.0, float(init_v16))
+        # Mathematically interpolate key features across the decision boundary
+        v14 = 0.05 + factor * (-6.75 - 0.05)
+        v10 = -0.09 + factor * (-4.60 - (-0.09))
+        v12 = 0.14 + factor * (-5.50 - 0.14)
+        v4 = -0.02 + factor * (4.20 - (-0.02))
+        v17 = -0.06 + factor * (-5.30 - (-0.06))
+        v11 = -0.03 + factor * (3.60 - (-0.03))
+        v3 = 0.18 + factor * (-5.10 - 0.18)
+        v16 = 0.07 + factor * (-3.55 - 0.07)
 
-    if st.button("🔍 Run Fraud Assessment", type="primary", use_container_width=True):
-        # Construct single row dataframe with consistent background features
-        # If V14 is significantly negative, background PCA components follow anomaly distribution
-        is_anom = (v14 < -3.0 or v10 < -3.0 or v4 > 3.0)
-        bg_val = -1.5 if is_anom else 0.0
+        col_met1, col_met2, col_met3, col_met4 = st.columns(4)
+        col_met1.metric("Calculated V14", f"{v14:.2f}")
+        col_met2.metric("Calculated V10", f"{v10:.2f}")
+        col_met3.metric("Calculated V4", f"{v4:.2f}")
+        col_met4.metric("Calculated V12", f"{v12:.2f}")
 
-        test_row = {f"V{i}": bg_val for i in range(1, 29)}
+    else:
+        st.subheader("Manual Latent PCA Sliders")
+        st.caption("Adjust individual features directly.")
+        col_v1, col_v2, col_v3, col_v4 = st.columns(4)
+        with col_v1:
+            v14 = st.slider("V14 (Primary Fraud Indicator)", -20.0, 10.0, 0.0)
+        with col_v2:
+            v10 = st.slider("V10 (Negative Anomaly)", -15.0, 10.0, 0.0)
+        with col_v3:
+            v12 = st.slider("V12 (Negative Anomaly)", -15.0, 10.0, 0.0)
+        with col_v4:
+            v4 = st.slider("V4 (Positive Spike Indicator)", -5.0, 15.0, 0.0)
+
+        with st.expander("Secondary Latent Features (V17, V11, V3, V16)"):
+            col_s1, col_s2, col_s3, col_s4 = st.columns(4)
+            with col_s1:
+                v17 = st.slider("V17 (High Impact)", -15.0, 10.0, 0.0)
+            with col_s2:
+                v11 = st.slider("V11 (High Impact)", -5.0, 15.0, 0.0)
+            with col_s3:
+                v3 = st.slider("V3 (Feature Spread)", -15.0, 10.0, 0.0)
+            with col_s4:
+                v16 = st.slider("V16 (Feature Spread)", -10.0, 10.0, 0.0)
+
+    if st.button("🔍 Run Live Fraud Assessment", type="primary", use_container_width=True):
+        test_row = {f"V{i}": 0.0 for i in range(1, 29)}
         test_row["V14"] = v14
         test_row["V10"] = v10
         test_row["V12"] = v12
