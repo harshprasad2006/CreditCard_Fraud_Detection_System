@@ -30,9 +30,6 @@ st.markdown("""
         border-left: 5px solid #1f77b4;
         box-shadow: 0 2px 4px rgba(0,0,0,0.05);
     }
-    .stAlert {
-        border-radius: 8px;
-    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -52,7 +49,7 @@ iso_forest, log_reg, rf_model, default_scaler = load_models()
 
 
 # -------------------------------------------------------------
-# Sidebar Dataset Management (Dynamic Upload or Default)
+# Sidebar Dataset Management (Upload or Default)
 # -------------------------------------------------------------
 st.sidebar.image("https://img.icons8.com/fluency/96/shield.png", width=65)
 st.sidebar.title("Data Control Center")
@@ -66,7 +63,9 @@ uploaded_file = st.sidebar.file_uploader(
 @st.cache_data
 def get_dataset(file_upload):
     if file_upload is not None:
-        return pd.read_csv(file_upload), "Uploaded CSV (" + file_upload.name + ")"
+        file_upload.seek(0)
+        uploaded_df = pd.read_csv(file_upload)
+        return uploaded_df, f"Uploaded CSV ({file_upload.name})"
     elif os.path.exists("creditcard.csv"):
         return pd.read_csv("creditcard.csv"), "Default Dataset (creditcard.csv)"
     elif os.path.exists("model_results.csv"):
@@ -99,22 +98,29 @@ page = st.sidebar.radio(
 # Helper: Live Feature Scaler & Predictor
 # -------------------------------------------------------------
 def run_live_predictions(input_df, model_obj, model_type="rf"):
-    # Expected features: V1..V28, Amount_scaled, Time_scaled
     proc_df = input_df.copy()
     
-    # Scale Amount and Time
+    # Scale Amount and Time dynamically
     cur_scaler = StandardScaler()
     if "Amount" in proc_df.columns:
-        proc_df["Amount_scaled"] = cur_scaler.fit_transform(proc_df[["Amount"]])
+        if len(proc_df) > 1 and proc_df["Amount"].nunique() > 1:
+            proc_df["Amount_scaled"] = cur_scaler.fit_transform(proc_df[["Amount"]])
+        elif default_scaler is not None and hasattr(default_scaler, "mean_"):
+            proc_df["Amount_scaled"] = (proc_df["Amount"] - default_scaler.mean_[0]) / default_scaler.scale_[0]
+        else:
+            proc_df["Amount_scaled"] = proc_df["Amount"] / 100.0
     else:
         proc_df["Amount_scaled"] = 0.0
 
     if "Time" in proc_df.columns:
-        proc_df["Time_scaled"] = cur_scaler.fit_transform(proc_df[["Time"]])
+        if len(proc_df) > 1 and proc_df["Time"].nunique() > 1:
+            proc_df["Time_scaled"] = cur_scaler.fit_transform(proc_df[["Time"]])
+        else:
+            proc_df["Time_scaled"] = proc_df["Time"] / 100000.0
     else:
         proc_df["Time_scaled"] = 0.0
 
-    # Ensure all required V1-V28 columns exist
+    # Ensure required V1-V28 features exist
     feature_cols = [f"V{i}" for i in range(1, 29)] + ["Amount_scaled", "Time_scaled"]
     for col in [f"V{i}" for i in range(1, 29)]:
         if col not in proc_df.columns:
@@ -138,7 +144,7 @@ def run_live_predictions(input_df, model_obj, model_type="rf"):
 # -------------------------------------------------------------
 if page == "1. 📌 Project Overview":
     st.title("🛡️ AI Fraud Detection Engine")
-    st.markdown("#### Real-Time Machine Learning Pipeline for High-Stakes Financial Transactions")
+    st.markdown("#### Real-Time Machine Learning Pipeline for Financial Transactions")
     st.markdown("---")
 
     c1, c2, c3, c4 = st.columns(4)
@@ -148,19 +154,19 @@ if page == "1. 📌 Project Overview":
         frauds_in_data = int(df["Class"].sum()) if (df is not None and "Class" in df.columns) else "N/A"
         st.metric("Fraud Labels in Data", str(frauds_in_data))
     with c3:
-        if df is not None and "Class" in df.columns:
+        if df is not None and "Class" in df.columns and len(df) > 0:
             pct_fraud = (df["Class"].sum() / len(df)) * 100
             st.metric("Imbalance Rate", f"{pct_fraud:.3f}%")
         else:
             st.metric("Imbalance Rate", "Unlabeled")
     with c4:
-        st.metric("Engine Mode", "Dynamic Live Inference")
+        st.metric("Active Dataset", dataset_source.split("(")[0].strip())
 
     st.markdown("### 🎯 Problem Statement & Methodology")
     st.info(
         """
-        - **Real-Time Data Ingestion:** Upload any dataset in the sidebar. The system dynamically scales features (`StandardScaler`), checks schema integrity, and feeds it directly into trained ML models.
-        - **Why Not Accuracy?** With a ~0.17% fraud rate, a naive algorithm that flags every transaction as 'Normal' scores 99.83% accuracy while missing 100% of frauds.
+        - **Real-Time Data Ingestion:** Upload any dataset in the sidebar. The system dynamically scales features (`StandardScaler`), aligns PCA dimensions, and feeds it directly into trained ML models.
+        - **Why Not Accuracy?** With a ~0.17% fraud rate, a naive algorithm predicting 'Normal' scores 99.83% accuracy while missing all frauds.
         - **Models Evaluated:**
           1. **Isolation Forest (Unsupervised):** Anomaly detection that isolates outliers without ground-truth labels.
           2. **Cost-Sensitive Logistic Regression:** Applies balanced class weighting to punish missed frauds.
@@ -178,8 +184,8 @@ elif page == "2. 📊 Dynamic Dataset & EDA":
     st.markdown("---")
 
     if df is not None:
-        st.subheader("1. Raw Data Preview (First 5 Rows)")
-        st.dataframe(df.head(5), use_container_width=True)
+        st.subheader(f"1. Raw Data Preview ({min(len(df), 10)} of {len(df):,} Rows)")
+        st.dataframe(df.head(10), use_container_width=True)
 
         c1, c2 = st.columns(2)
         with c1:
@@ -187,32 +193,33 @@ elif page == "2. 📊 Dynamic Dataset & EDA":
                 st.subheader("2. Class Imbalance (Actual Distribution)")
                 counts = df["Class"].value_counts().reset_index()
                 counts.columns = ["Class", "Count"]
-                counts["Label"] = counts["Class"].map({0: "Legitimate (0)", 1: "Fraud (1)"})
+                counts["Label"] = counts["Class"].map({0: "Legitimate (0)", 1: "Fraud (1)"}).fillna(counts["Class"].astype(str))
                 fig_bar = px.bar(
                     counts, x="Label", y="Count", text="Count",
                     color="Label", color_discrete_map={"Legitimate (0)": "#1f77b4", "Fraud (1)": "#d62728"},
-                    log_y=True, title="Class Imbalance (Logarithmic Scale)"
+                    log_y=True if len(df) > 100 else False,
+                    title="Class Distribution"
                 )
                 st.plotly_chart(fig_bar, use_container_width=True)
             else:
-                st.warning("Column 'Class' not found in uploaded file. Class distribution chart skipped.")
+                st.warning("Column 'Class' not found in uploaded file. Showing row count.")
+                st.metric("Total Rows", len(df))
 
         with c2:
-            if "Amount" in df.columns and "Class" in df.columns:
+            if "Amount" in df.columns and "Class" in df.columns and df["Class"].nunique() > 1:
                 st.subheader("3. Transaction Amount Comparison")
                 fig_box = px.box(
-                    df[df["Amount"] <= 500],
-                    x="Class", y="Amount", color="Class",
+                    df, x="Class", y="Amount", color="Class",
                     color_discrete_map={0: "#2ca02c", 1: "#d62728"},
-                    title="Transaction Amount ($0 - $500 Range)"
+                    title="Transaction Amount by Class"
                 )
                 st.plotly_chart(fig_box, use_container_width=True)
             elif "Amount" in df.columns:
                 st.subheader("3. Transaction Amount Distribution")
-                fig_hist = px.histogram(df[df["Amount"] <= 500], x="Amount", nbins=50, title="Amount Distribution")
+                fig_hist = px.histogram(df, x="Amount", nbins=min(30, max(5, len(df))), title="Amount Distribution")
                 st.plotly_chart(fig_hist, use_container_width=True)
 
-        if "Time" in df.columns and "Class" in df.columns:
+        if "Time" in df.columns and "Class" in df.columns and df["Class"].nunique() > 1:
             st.subheader("4. Hourly Transaction Patterns")
             df_hour = df.copy()
             df_hour["Hour"] = (df_hour["Time"] // 3600) % 24
@@ -235,7 +242,7 @@ elif page == "2. 📊 Dynamic Dataset & EDA":
 
 
 # -------------------------------------------------------------
-# 3. Live Model Inference & Evaluation (Dynamic!)
+# 3. Live Model Inference & Evaluation (Bug-free Dynamic)
 # -------------------------------------------------------------
 elif page == "3. 🧠 Live Model Inference & Evaluation":
     st.title("🧠 Live Model Inference & Performance Evaluation")
@@ -243,13 +250,12 @@ elif page == "3. 🧠 Live Model Inference & Evaluation":
     st.markdown("---")
 
     if df is not None and "Class" in df.columns:
-        st.write(f"Evaluating models live on **{min(len(df), 25000):,} samples** from `{dataset_source}`...")
-        
-        # Take a balanced evaluation slice for instant responsiveness
         eval_slice = df.sample(min(len(df), 25000), random_state=42) if len(df) > 25000 else df
         y_actual = eval_slice["Class"].values
 
-        with st.spinner("Executing live predictions across Random Forest, Logistic Regression, and Isolation Forest..."):
+        st.info(f"⚡ Running live model inference on **{len(eval_slice):,} samples** from `{dataset_source}`...")
+
+        with st.spinner("Executing predictions across Random Forest, Logistic Regression, and Isolation Forest..."):
             pred_rf, proba_rf = run_live_predictions(eval_slice, rf_model, "rf")
             pred_lr, proba_lr = run_live_predictions(eval_slice, log_reg, "lr")
             pred_iso, _ = run_live_predictions(eval_slice, iso_forest, "iso")
@@ -267,7 +273,16 @@ elif page == "3. 🧠 Live Model Inference & Evaluation":
             prec = precision_score(y_actual, m_pred, zero_division=0)
             rec = recall_score(y_actual, m_pred, zero_division=0)
             f1 = f1_score(y_actual, m_pred, zero_division=0)
-            auc = roc_auc_score(y_actual, m_prob) if m_prob is not None else np.nan
+            
+            # ROC-AUC calculation only valid if both classes (0 and 1) are present in y_actual
+            if m_prob is not None and len(np.unique(y_actual)) > 1:
+                try:
+                    auc = roc_auc_score(y_actual, m_prob)
+                    auc_str = f"{auc:.4f}"
+                except Exception:
+                    auc_str = "N/A"
+            else:
+                auc_str = "N/A"
 
             perf_data.append({
                 "Model": m_name,
@@ -275,14 +290,15 @@ elif page == "3. 🧠 Live Model Inference & Evaluation":
                 "Precision": f"{prec:.4f}",
                 "Recall": f"{rec:.4f}",
                 "F1-Score": f"{f1:.4f}",
-                "ROC-AUC": f"{auc:.4f}" if not np.isnan(auc) else "N/A"
+                "ROC-AUC": auc_str
             })
-            cms[m_name] = confusion_matrix(y_actual, m_pred)
+            # Force labels=[0, 1] so confusion matrix is always guaranteed 2x2 [[TN, FP], [FN, TP]]
+            cms[m_name] = confusion_matrix(y_actual, m_pred, labels=[0, 1])
 
         st.subheader("📋 Live Performance Comparison Table")
         st.dataframe(pd.DataFrame(perf_data), use_container_width=True)
 
-        st.subheader("🧩 Confusion Matrices (Live Predictions)")
+        st.subheader("🧩 Confusion Matrices (Guaranteed 2x2 [[Normal, Fraud]])")
         col_cm1, col_cm2, col_cm3 = st.columns(3)
         for idx, (m_name, cm) in enumerate(cms.items()):
             col_target = [col_cm1, col_cm2, col_cm3][idx]
@@ -290,37 +306,47 @@ elif page == "3. 🧠 Live Model Inference & Evaluation":
                 fig_cm = px.imshow(
                     cm, text_auto=True, color_continuous_scale="Blues",
                     labels=dict(x="Predicted", y="Actual"),
-                    x=["Normal", "Fraud"], y=["Normal", "Fraud"],
+                    x=["Normal (0)", "Fraud (1)"], y=["Normal (0)", "Fraud (1)"],
                     title=f"{m_name}"
                 )
                 st.plotly_chart(fig_cm, use_container_width=True)
 
-        st.subheader("📈 ROC Curves Comparison")
-        fig_roc = go.Figure()
-        fig_roc.add_shape(type='line', line=dict(dash='dash'), x0=0, x1=1, y0=0, y1=1)
+        if len(np.unique(y_actual)) > 1:
+            st.subheader("📈 ROC Curves Comparison")
+            fig_roc = go.Figure()
+            fig_roc.add_shape(type='line', line=dict(dash='dash'), x0=0, x1=1, y0=0, y1=1)
 
-        for m_name, (m_pred, m_prob) in model_results.items():
-            if m_prob is not None:
-                fpr, tpr, _ = roc_curve(y_actual, m_prob)
-                auc_val = roc_auc_score(y_actual, m_prob)
-                fig_roc.add_trace(go.Scatter(x=fpr, y=tpr, name=f"{m_name} (AUC = {auc_val:.3f})", mode='lines'))
+            for m_name, (m_pred, m_prob) in model_results.items():
+                if m_prob is not None:
+                    try:
+                        fpr, tpr, _ = roc_curve(y_actual, m_prob)
+                        auc_val = roc_auc_score(y_actual, m_prob)
+                        fig_roc.add_trace(go.Scatter(x=fpr, y=tpr, name=f"{m_name} (AUC = {auc_val:.3f})", mode='lines'))
+                    except Exception:
+                        pass
 
-        fig_roc.update_layout(xaxis_title="False Positive Rate", yaxis_title="True Positive Rate", width=800, height=500)
-        st.plotly_chart(fig_roc, use_container_width=True)
+            fig_roc.update_layout(xaxis_title="False Positive Rate", yaxis_title="True Positive Rate", width=800, height=500)
+            st.plotly_chart(fig_roc, use_container_width=True)
+        else:
+            st.caption("ℹ️ Note: ROC curve requires both Normal (0) and Fraud (1) labels in the dataset.")
 
     elif df is not None:
-        st.warning("The uploaded file does not have a 'Class' column (unlabeled data). Evaluation metrics require ground truth labels, but you can still run Real-Time Simulation and Single Transaction Inspector!")
+        st.warning("⚠️ The uploaded file does not have a 'Class' column (unlabeled data). Evaluation metrics require ground truth labels, but you can still run Real-Time Simulation and Single Transaction Inspector!")
     else:
         st.error("No dataset found. Please upload a dataset in the sidebar.")
 
 
 # -------------------------------------------------------------
-# 4. Real-Time Simulation Engine (Dynamic Source Streaming)
+# 4. Real-Time Simulation Engine (Strict Active Dataset)
 # -------------------------------------------------------------
 elif page == "4. 🔴 Real-Time Simulation Engine":
     st.title("🔴 Real-Time Transaction Monitoring Engine")
     st.markdown(f"Streaming live transactions directly from: `{dataset_source}`")
     st.markdown("---")
+
+    if df is None or len(df) == 0:
+        st.error("No dataset available to simulate. Please upload a dataset in the sidebar.")
+        st.stop()
 
     col_ctrl, col_display = st.columns([1, 2])
 
@@ -330,9 +356,23 @@ elif page == "4. 🔴 Real-Time Simulation Engine":
             "Detection Model Engine",
             ["Random Forest (SMOTE)", "Logistic Regression", "Isolation Forest"]
         )
-        sim_count = st.slider("Stream Batch Size", 10, 100, 30, 5)
+        max_streamable = len(df)
+        sim_count = st.slider(
+            "Stream Batch Size",
+            min_value=1,
+            max_value=min(100, max_streamable),
+            value=min(20, max_streamable),
+            step=1
+        )
         sim_speed = st.slider("Latency (seconds per transaction)", 0.05, 0.8, 0.15)
-        boost_frauds = st.checkbox("Inject Frauds in Stream (Recommended for Live Demo)", value=True)
+        
+        has_fraud_label = ("Class" in df.columns and 1 in df["Class"].values)
+        if has_fraud_label:
+            boost_frauds = st.checkbox("Inject Frauds in Stream (Recommended for Live Demo)", value=True)
+        else:
+            boost_frauds = False
+            st.caption("ℹ️ 'Class' label not present or only 1 class in uploaded data: streaming directly row-by-row.")
+            
         start_stream_btn = st.button("▶ Start Real-Time Stream", type="primary")
 
     with col_display:
@@ -345,22 +385,18 @@ elif page == "4. 🔴 Real-Time Simulation Engine":
         log_box = st.empty()
 
     if start_stream_btn:
-        if df is None:
-            st.error("Please provide a dataset first.")
-            st.stop()
-
-        # Sample transactions from active dataset
-        if "Class" in df.columns and boost_frauds:
+        # STRICT SAMPLING: ONLY FROM THE UPLOADED/ACTIVE DATASET!
+        if has_fraud_label and boost_frauds:
             frauds_subset = df[df["Class"] == 1]
             normal_subset = df[df["Class"] == 0]
-            n_f = max(2, int(sim_count * 0.25)) if len(frauds_subset) > 0 else 0
+            n_f = max(1, int(sim_count * 0.3)) if len(frauds_subset) > 0 else 0
             n_n = sim_count - n_f
-            sample_stream = pd.concat([
-                frauds_subset.sample(min(n_f, len(frauds_subset)), replace=True),
-                normal_subset.sample(n_n, replace=True)
-            ]).sample(frac=1).reset_index(drop=True)
+            
+            f_sample = frauds_subset.sample(n_f, replace=(len(frauds_subset) < n_f))
+            n_sample = normal_subset.sample(n_n, replace=(len(normal_subset) < n_n)) if len(normal_subset) > 0 else pd.DataFrame()
+            sample_stream = pd.concat([f_sample, n_sample]).sample(frac=1).reset_index(drop=True)
         else:
-            sample_stream = df.sample(min(sim_count, len(df)), replace=True).reset_index(drop=True)
+            sample_stream = df.sample(sim_count, replace=(len(df) < sim_count)).reset_index(drop=True)
 
         selected_model = (
             rf_model if chosen_model_name == "Random Forest (SMOTE)"
@@ -373,13 +409,12 @@ elif page == "4. 🔴 Real-Time Simulation Engine":
         total_intercepted = 0.0
         stream_records = []
 
-        status_box.info("⚡ Ingesting live transaction events...")
+        status_box.info(f"⚡ Streaming {len(sample_stream)} transactions live from: {dataset_source}...")
 
         for idx, row in sample_stream.iterrows():
             time.sleep(sim_speed)
             row_df = pd.DataFrame([row])
             
-            # Predict live using the unified inference helper
             pred, proba = run_live_predictions(row_df, selected_model, model_key)
             is_fraud = (pred[0] == 1)
             fraud_score = proba[0] if proba is not None else (0.95 if is_fraud else 0.05)
@@ -393,7 +428,7 @@ elif page == "4. 🔴 Real-Time Simulation Engine":
                 badge = "✅ APPROVED"
 
             actual_lbl = row.get("Class", "Unknown")
-            actual_str = "Fraud" if actual_lbl == 1 else "Normal" if actual_lbl == 0 else "Unknown"
+            actual_str = "Fraud (1)" if actual_lbl == 1 else "Normal (0)" if actual_lbl == 0 else "Unknown"
 
             stream_records.insert(0, {
                 "Transaction ID": f"TXN-{1000 + idx}",
@@ -409,7 +444,7 @@ elif page == "4. 🔴 Real-Time Simulation Engine":
 
             log_box.dataframe(pd.DataFrame(stream_records), use_container_width=True)
 
-        status_box.success("🎉 Stream completed! All transactions processed.")
+        status_box.success(f"🎉 Stream finished! Processed transactions strictly from `{dataset_source}`.")
 
 
 # -------------------------------------------------------------
@@ -442,7 +477,6 @@ elif page == "5. 🧪 Single Transaction Inspector":
         v4 = st.slider("V4 (Positive Indicator)", -5.0, 15.0, 4.0 if test_amount > 1000 else -0.5)
 
     if st.button("🔍 Run Fraud Assessment", type="primary"):
-        # Construct single row dataframe
         test_row = {f"V{i}": 0.0 for i in range(1, 29)}
         test_row["V14"] = v14
         test_row["V10"] = v10
